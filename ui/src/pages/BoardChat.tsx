@@ -15,19 +15,14 @@ import { queryKeys } from "../lib/queryKeys";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { History, ListFilter, MessageSquarePlus, Send } from "lucide-react";
+import { Activity, History, MessageSquarePlus, Send, X } from "lucide-react";
+import { ActivityFeed } from "../components/ActivityFeed";
 import { cn } from "../lib/utils";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
 /**
  * Board Concierge Chat — a chat interface powered by the board-member skill.
@@ -40,14 +35,6 @@ const SPLIT_MIN_PANE_PX = 280;
 /** Chat pane share of width below the divider (agent feed gets the rest). */
 const DEFAULT_CHAT_FRACTION = 2 / 3;
 
-const AGENT_FEED_FILTER_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "in-progress", label: "In Progress" },
-  { value: "for-review", label: "In Review" },
-  { value: "completed", label: "Done" },
-] as const;
-
-type AgentFeedFilterValue = (typeof AGENT_FEED_FILTER_OPTIONS)[number]["value"];
 
 /** Wrapped markdown in bubbles; pre/table scroll horizontally when needed. */
 const BOARD_CHAT_MARKDOWN_CLASS =
@@ -69,7 +56,7 @@ export function BoardChat() {
   const [containerWidth, setContainerWidth] = useState(0);
   const [chatPaneFraction, setChatPaneFraction] = useState(DEFAULT_CHAT_FRACTION);
   const splitDragging = useRef(false);
-  const [agentFeedFilter, setAgentFeedFilter] = useState<AgentFeedFilterValue>("all");
+
 
   useLayoutEffect(() => {
     const el = splitContainerRef.current;
@@ -358,19 +345,22 @@ export function BoardChat() {
     );
   }
 
+  const [mobileFeedOpen, setMobileFeedOpen] = useState(false);
+
   return (
     <div className="flex h-[calc(100%+3rem)] flex-col -m-6">
       <div
         ref={splitContainerRef}
         className="flex min-h-0 min-w-0 flex-1 flex-row"
       >
-        {/* Left: chat (self-contained pane) — 2/3 default until container is measured for drag math */}
+        {/* Left: chat (self-contained pane) — full width on mobile, 2/3 default on desktop */}
         <div
           className={cn(
             "flex min-h-0 min-w-0 shrink-0 flex-col bg-background",
-            innerWidth <= 0 && "w-2/3",
+            "w-full md:w-auto",
+            innerWidth <= 0 && "md:w-2/3",
           )}
-          style={innerWidth > 0 ? { width: leftPaneWidth } : undefined}
+          style={innerWidth > 0 && containerWidth >= 2 * SPLIT_MIN_PANE_PX + SPLIT_DIVIDER_PX ? { width: leftPaneWidth } : undefined}
         >
           <div className="relative flex shrink-0 items-center justify-between gap-2 px-4 py-3">
             <div
@@ -535,12 +525,12 @@ export function BoardChat() {
           </div>
         </div>
 
-        {/* Resize handle: 1px line on chat edge; drag target extends into gutter */}
+        {/* Resize handle — hidden on mobile */}
         <div
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize board chat and agent feed"
-          className="group relative flex w-3 shrink-0 cursor-col-resize bg-background"
+          className="group relative hidden w-3 shrink-0 cursor-col-resize bg-background md:flex"
           onMouseDown={handleSplitDragStart}
         >
           <div
@@ -549,60 +539,30 @@ export function BoardChat() {
           />
         </div>
 
-        {/* Right: Agent Feed (self-contained pane) */}
-        <aside className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-          <div className="relative flex shrink-0 items-start justify-between gap-2 px-4 py-3">
-            <div
-              className="pointer-events-none absolute bottom-0 h-px bg-border"
-              style={{
-                left: -SPLIT_DIVIDER_PX,
-                right: 0,
-              }}
-              aria-hidden
-            />
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold">Agent Feed</h3>
-              <p className="text-xs text-muted-foreground">
-                Live activity from your agents
-              </p>
-            </div>
-            <DropdownMenu>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="shrink-0 text-muted-foreground"
-                      aria-label="filter by"
-                    >
-                      <ListFilter />
-                    </Button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">filter by</TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuRadioGroup
-                  value={agentFeedFilter}
-                  onValueChange={(v) => setAgentFeedFilter(v as AgentFeedFilterValue)}
-                >
-                  {AGENT_FEED_FILTER_OPTIONS.map(({ value, label }) => (
-                    <DropdownMenuRadioItem key={value} value={value}>
-                      {label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-            <p className="max-w-[14rem] text-center text-sm text-muted-foreground">
-              Activity from your agents will appear here.
-            </p>
-          </div>
-        </aside>
+        {/* Right: Agent Feed — hidden on mobile */}
+        <div className="hidden md:flex md:min-h-0 md:min-w-0 md:flex-1">
+          <ActivityFeed />
+        </div>
+      </div>
+
+      {/* Mobile: floating feed toggle + sheet drawer */}
+      <div className="md:hidden">
+        <Sheet open={mobileFeedOpen} onOpenChange={setMobileFeedOpen}>
+          <SheetTrigger asChild>
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="fixed bottom-20 right-4 z-20 h-10 w-10 rounded-full shadow-lg"
+              aria-label="Open agent feed"
+            >
+              <Activity className="h-4 w-4" />
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="bottom" className="h-[70vh] p-0 rounded-t-xl">
+            <ActivityFeed />
+          </SheetContent>
+        </Sheet>
       </div>
     </div>
   );
