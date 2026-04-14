@@ -6,9 +6,13 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import * as schema from "./schema/index.js";
 
-const MIGRATIONS_FOLDER = fileURLToPath(new URL("./migrations", import.meta.url));
+const MIGRATIONS_FOLDER = fileURLToPath(
+  new URL("./migrations", import.meta.url),
+);
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
-const MIGRATIONS_JOURNAL_JSON = fileURLToPath(new URL("./migrations/meta/_journal.json", import.meta.url));
+const MIGRATIONS_JOURNAL_JSON = fileURLToPath(
+  new URL("./migrations/meta/_journal.json", import.meta.url),
+);
 
 function createUtilitySql(url: string) {
   return postgres(url, { max: 1, onnotice: () => {} });
@@ -19,8 +23,9 @@ function isSafeIdentifier(value: string): boolean {
 }
 
 function quoteIdentifier(value: string): string {
-  if (!isSafeIdentifier(value)) throw new Error(`Unsafe SQL identifier: ${value}`);
-  return `"${value.replaceAll("\"", "\"\"")}"`;
+  if (!isSafeIdentifier(value))
+    throw new Error(`Unsafe SQL identifier: ${value}`);
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function quoteLiteral(value: string): string {
@@ -35,22 +40,32 @@ function splitMigrationStatements(content: string): string[] {
 }
 
 export type MigrationState =
-  | { status: "upToDate"; tableCount: number; availableMigrations: string[]; appliedMigrations: string[] }
+  | {
+      status: "upToDate";
+      tableCount: number;
+      availableMigrations: string[];
+      appliedMigrations: string[];
+    }
   | {
       status: "needsMigrations";
       tableCount: number;
       availableMigrations: string[];
       appliedMigrations: string[];
       pendingMigrations: string[];
-      reason: "no-migration-journal-empty-db" | "no-migration-journal-non-empty-db" | "pending-migrations";
+      reason:
+        | "no-migration-journal-empty-db"
+        | "no-migration-journal-non-empty-db"
+        | "pending-migrations";
     };
 
 export function createDb(url: string) {
-  const sql = postgres(url);
+  const sql = postgres(url, { max: 5, idle_timeout: 20 });
   return drizzlePg(sql, { schema });
 }
 
-export async function getPostgresDataDirectory(url: string): Promise<string | null> {
+export async function getPostgresDataDirectory(
+  url: string,
+): Promise<string | null> {
   const sql = createUtilitySql(url);
   try {
     const rows = await sql<{ data_directory: string | null }[]>`
@@ -91,9 +106,16 @@ async function listJournalMigrationEntries(): Promise<JournalMigrationEntry[]> {
     return parsed.entries
       .map((entry, entryIndex) => {
         if (typeof entry?.tag !== "string") return null;
-        if (typeof entry?.when !== "number" || !Number.isFinite(entry.when)) return null;
-        const order = Number.isInteger(entry.idx) ? Number(entry.idx) : entryIndex;
-        return { fileName: `${entry.tag}.sql`, folderMillis: entry.when, order };
+        if (typeof entry?.when !== "number" || !Number.isFinite(entry.when))
+          return null;
+        const order = Number.isInteger(entry.idx)
+          ? Number(entry.idx)
+          : entryIndex;
+        return {
+          fileName: `${entry.tag}.sql`,
+          folderMillis: entry.when,
+          order,
+        };
       })
       .filter((entry): entry is JournalMigrationEntry => entry !== null);
   } catch {
@@ -106,17 +128,27 @@ async function listJournalMigrationFiles(): Promise<string[]> {
   return entries.map((entry) => entry.fileName);
 }
 
-async function readMigrationFileContent(migrationFile: string): Promise<string> {
-  return readFile(new URL(`./migrations/${migrationFile}`, import.meta.url), "utf8");
+async function readMigrationFileContent(
+  migrationFile: string,
+): Promise<string> {
+  return readFile(
+    new URL(`./migrations/${migrationFile}`, import.meta.url),
+    "utf8",
+  );
 }
 
-async function orderMigrationsByJournal(migrationFiles: string[]): Promise<string[]> {
+async function orderMigrationsByJournal(
+  migrationFiles: string[],
+): Promise<string[]> {
   const journalEntries = await listJournalMigrationEntries();
-  const orderByFileName = new Map(journalEntries.map((entry) => [entry.fileName, entry.order]));
+  const orderByFileName = new Map(
+    journalEntries.map((entry) => [entry.fileName, entry.order]),
+  );
   return [...migrationFiles].sort((left, right) => {
     const leftOrder = orderByFileName.get(left);
     const rightOrder = orderByFileName.get(right);
-    if (leftOrder === undefined && rightOrder === undefined) return left.localeCompare(right);
+    if (leftOrder === undefined && rightOrder === undefined)
+      return left.localeCompare(right);
     if (leftOrder === undefined) return 1;
     if (rightOrder === undefined) return -1;
     if (leftOrder === rightOrder) return left.localeCompare(right);
@@ -126,7 +158,10 @@ async function orderMigrationsByJournal(migrationFiles: string[]): Promise<strin
 
 type SqlExecutor = Pick<ReturnType<typeof postgres>, "unsafe">;
 
-async function runInTransaction(sql: SqlExecutor, action: () => Promise<void>): Promise<void> {
+async function runInTransaction(
+  sql: SqlExecutor,
+  action: () => Promise<void>,
+): Promise<void> {
   await sql.unsafe("BEGIN");
   try {
     await action();
@@ -170,10 +205,14 @@ async function ensureMigrationJournalTable(
     await sql.unsafe(
       `CREATE TABLE IF NOT EXISTS ${drizzleSchema}.${migrationTable} (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`,
     );
-    migrationTableSchema = (await discoverMigrationTableSchema(sql)) ?? "drizzle";
+    migrationTableSchema =
+      (await discoverMigrationTableSchema(sql)) ?? "drizzle";
   }
 
-  const columnNames = await getMigrationTableColumnNames(sql, migrationTableSchema);
+  const columnNames = await getMigrationTableColumnNames(
+    sql,
+    migrationTableSchema,
+  );
   return { migrationTableSchema, columnNames };
 }
 
@@ -186,7 +225,8 @@ async function migrationHistoryEntryExists(
 ): Promise<boolean> {
   const predicates: string[] = [];
   if (columnNames.has("hash")) predicates.push(`hash = ${quoteLiteral(hash)}`);
-  if (columnNames.has("name")) predicates.push(`name = ${quoteLiteral(migrationFile)}`);
+  if (columnNames.has("name"))
+    predicates.push(`name = ${quoteLiteral(migrationFile)}`);
   if (predicates.length === 0) return false;
 
   const rows = await sql.unsafe<{ one: number }[]>(
@@ -216,9 +256,10 @@ async function recordMigrationHistoryEntry(
   }
   if (columnNames.has("created_at")) {
     const latestCreatedAt = await latestMigrationCreatedAt(sql, qualifiedTable);
-    const createdAt = latestCreatedAt === null
-      ? normalizeFolderMillis(folderMillis)
-      : Math.max(latestCreatedAt + 1, normalizeFolderMillis(folderMillis));
+    const createdAt =
+      latestCreatedAt === null
+        ? normalizeFolderMillis(folderMillis)
+        : Math.max(latestCreatedAt + 1, normalizeFolderMillis(folderMillis));
     insertColumns.push(quoteIdentifier("created_at"));
     insertValues.push(quoteLiteral(String(createdAt)));
   }
@@ -236,15 +277,20 @@ async function applyPendingMigrationsManually(
 ): Promise<void> {
   if (pendingMigrations.length === 0) return;
 
-  const orderedPendingMigrations = await orderMigrationsByJournal(pendingMigrations);
+  const orderedPendingMigrations =
+    await orderMigrationsByJournal(pendingMigrations);
   const journalEntries = await listJournalMigrationEntries();
   const folderMillisByFileName = new Map(
-    journalEntries.map((entry) => [entry.fileName, normalizeFolderMillis(entry.folderMillis)]),
+    journalEntries.map((entry) => [
+      entry.fileName,
+      normalizeFolderMillis(entry.folderMillis),
+    ]),
   );
 
   const sql = createUtilitySql(url);
   try {
-    const { migrationTableSchema, columnNames } = await ensureMigrationJournalTable(sql);
+    const { migrationTableSchema, columnNames } =
+      await ensureMigrationJournalTable(sql);
     const qualifiedTable = `${quoteIdentifier(migrationTableSchema)}.${quoteIdentifier(DRIZZLE_MIGRATIONS_TABLE)}`;
 
     for (const migrationFile of orderedPendingMigrations) {
@@ -279,7 +325,9 @@ async function applyPendingMigrationsManually(
   }
 }
 
-async function mapHashesToMigrationFiles(migrationFiles: string[]): Promise<Map<string, string>> {
+async function mapHashesToMigrationFiles(
+  migrationFiles: string[],
+): Promise<Map<string, string>> {
   const mapped = new Map<string, string>();
 
   await Promise.all(
@@ -379,7 +427,9 @@ async function migrationStatementAlreadyApplied(
 ): Promise<boolean> {
   const normalized = statement.replace(/\s+/g, " ").trim();
 
-  const createTableMatch = normalized.match(/^CREATE TABLE(?: IF NOT EXISTS)? "([^"]+)"/i);
+  const createTableMatch = normalized.match(
+    /^CREATE TABLE(?: IF NOT EXISTS)? "([^"]+)"/i,
+  );
   if (createTableMatch) {
     return tableExists(sql, createTableMatch[1]);
   }
@@ -391,12 +441,16 @@ async function migrationStatementAlreadyApplied(
     return columnExists(sql, addColumnMatch[1], addColumnMatch[2]);
   }
 
-  const createIndexMatch = normalized.match(/^CREATE (?:UNIQUE )?INDEX(?: IF NOT EXISTS)? "([^"]+)"/i);
+  const createIndexMatch = normalized.match(
+    /^CREATE (?:UNIQUE )?INDEX(?: IF NOT EXISTS)? "([^"]+)"/i,
+  );
   if (createIndexMatch) {
     return indexExists(sql, createIndexMatch[1]);
   }
 
-  const addConstraintMatch = normalized.match(/^ALTER TABLE "([^"]+)" ADD CONSTRAINT "([^"]+)"/i);
+  const addConstraintMatch = normalized.match(
+    /^ALTER TABLE "([^"]+)" ADD CONSTRAINT "([^"]+)"/i,
+  );
   if (addConstraintMatch) {
     return constraintExists(sql, addConstraintMatch[2]);
   }
@@ -427,16 +481,26 @@ async function loadAppliedMigrations(
 ): Promise<string[]> {
   const quotedSchema = quoteIdentifier(migrationTableSchema);
   const qualifiedTable = `${quotedSchema}.${quoteIdentifier(DRIZZLE_MIGRATIONS_TABLE)}`;
-  const columnNames = await getMigrationTableColumnNames(sql, migrationTableSchema);
+  const columnNames = await getMigrationTableColumnNames(
+    sql,
+    migrationTableSchema,
+  );
 
   if (columnNames.has("name")) {
-    const rows = await sql.unsafe<{ name: string }[]>(`SELECT name FROM ${qualifiedTable} ORDER BY id`);
-    return rows.map((row) => row.name).filter((name): name is string => Boolean(name));
+    const rows = await sql.unsafe<{ name: string }[]>(
+      `SELECT name FROM ${qualifiedTable} ORDER BY id`,
+    );
+    return rows
+      .map((row) => row.name)
+      .filter((name): name is string => Boolean(name));
   }
 
   if (columnNames.has("hash")) {
-    const rows = await sql.unsafe<{ hash: string }[]>(`SELECT hash FROM ${qualifiedTable} ORDER BY id`);
-    const hashesToMigrationFiles = await mapHashesToMigrationFiles(availableMigrations);
+    const rows = await sql.unsafe<{ hash: string }[]>(
+      `SELECT hash FROM ${qualifiedTable} ORDER BY id`,
+    );
+    const hashesToMigrationFiles =
+      await mapHashesToMigrationFiles(availableMigrations);
     const appliedFromHashes = rows
       .map((row) => hashesToMigrationFiles.get(row.hash))
       .filter((name): name is string => Boolean(name));
@@ -453,7 +517,9 @@ async function loadAppliedMigrations(
     if (columnNames.has("created_at")) {
       const journalEntries = await listJournalMigrationEntries();
       if (journalEntries.length > 0) {
-        const lastDbRows = await sql.unsafe<{ created_at: string | number | null }[]>(
+        const lastDbRows = await sql.unsafe<
+          { created_at: string | number | null }[]
+        >(
           `SELECT created_at FROM ${qualifiedTable} ORDER BY created_at DESC LIMIT 1`,
         );
         const lastCreatedAt = Number(lastDbRows[0]?.created_at ?? -1);
@@ -468,7 +534,9 @@ async function loadAppliedMigrations(
     }
   }
 
-  const rows = await sql.unsafe<{ id: number }[]>(`SELECT id FROM ${qualifiedTable} ORDER BY id`);
+  const rows = await sql.unsafe<{ id: number }[]>(
+    `SELECT id FROM ${qualifiedTable} ORDER BY id`,
+  );
   const journalMigrationFiles = await listJournalMigrationFiles();
   const appliedFromIds = rows
     .map((row) => journalMigrationFiles[row.id - 1])
@@ -487,7 +555,10 @@ export async function reconcilePendingMigrationHistory(
   url: string,
 ): Promise<MigrationHistoryReconcileResult> {
   const state = await inspectMigrations(url);
-  if (state.status !== "needsMigrations" || state.reason !== "pending-migrations") {
+  if (
+    state.status !== "needsMigrations" ||
+    state.reason !== "pending-migrations"
+  ) {
     return { repairedMigrations: [], remainingMigrations: [] };
   }
 
@@ -496,18 +567,29 @@ export async function reconcilePendingMigrationHistory(
 
   try {
     const journalEntries = await listJournalMigrationEntries();
-    const folderMillisByFile = new Map(journalEntries.map((entry) => [entry.fileName, entry.folderMillis]));
+    const folderMillisByFile = new Map(
+      journalEntries.map((entry) => [entry.fileName, entry.folderMillis]),
+    );
     const migrationTableSchema = await discoverMigrationTableSchema(sql);
     if (!migrationTableSchema) {
-      return { repairedMigrations, remainingMigrations: state.pendingMigrations };
+      return {
+        repairedMigrations,
+        remainingMigrations: state.pendingMigrations,
+      };
     }
 
-    const columnNames = await getMigrationTableColumnNames(sql, migrationTableSchema);
+    const columnNames = await getMigrationTableColumnNames(
+      sql,
+      migrationTableSchema,
+    );
     const qualifiedTable = `${quoteIdentifier(migrationTableSchema)}.${quoteIdentifier(DRIZZLE_MIGRATIONS_TABLE)}`;
 
     for (const migrationFile of state.pendingMigrations) {
       const migrationContent = await readMigrationFileContent(migrationFile);
-      const alreadyApplied = await migrationContentAlreadyApplied(sql, migrationContent);
+      const alreadyApplied = await migrationContentAlreadyApplied(
+        sql,
+        migrationContent,
+      );
       if (!alreadyApplied) break;
 
       const hash = createHash("sha256").update(migrationContent).digest("hex");
@@ -524,15 +606,27 @@ export async function reconcilePendingMigrationHistory(
         : [];
       if (existingByHash.length > 0 || existingByName.length > 0) {
         if (columnNames.has("created_at")) {
-          const existingHashCreatedAt = Number(existingByHash[0]?.created_at ?? -1);
-          if (existingByHash.length > 0 && Number.isFinite(existingHashCreatedAt) && existingHashCreatedAt < folderMillis) {
+          const existingHashCreatedAt = Number(
+            existingByHash[0]?.created_at ?? -1,
+          );
+          if (
+            existingByHash.length > 0 &&
+            Number.isFinite(existingHashCreatedAt) &&
+            existingHashCreatedAt < folderMillis
+          ) {
             await sql.unsafe(
               `UPDATE ${qualifiedTable} SET created_at = ${quoteLiteral(String(folderMillis))} WHERE hash = ${quoteLiteral(hash)} AND created_at < ${quoteLiteral(String(folderMillis))}`,
             );
           }
 
-          const existingNameCreatedAt = Number(existingByName[0]?.created_at ?? -1);
-          if (existingByName.length > 0 && Number.isFinite(existingNameCreatedAt) && existingNameCreatedAt < folderMillis) {
+          const existingNameCreatedAt = Number(
+            existingByName[0]?.created_at ?? -1,
+          );
+          if (
+            existingByName.length > 0 &&
+            Number.isFinite(existingNameCreatedAt) &&
+            existingNameCreatedAt < folderMillis
+          ) {
             await sql.unsafe(
               `UPDATE ${qualifiedTable} SET created_at = ${quoteLiteral(String(folderMillis))} WHERE name = ${quoteLiteral(migrationFile)} AND created_at < ${quoteLiteral(String(folderMillis))}`,
             );
@@ -578,7 +672,9 @@ export async function reconcilePendingMigrationHistory(
   };
 }
 
-async function discoverMigrationTableSchema(sql: ReturnType<typeof postgres>): Promise<string | null> {
+async function discoverMigrationTableSchema(
+  sql: ReturnType<typeof postgres>,
+): Promise<string | null> {
   const rows = await sql<{ schemaName: string }[]>`
     SELECT n.nspname AS "schemaName"
     FROM pg_class c
@@ -633,8 +729,14 @@ export async function inspectMigrations(url: string): Promise<MigrationState> {
       };
     }
 
-    const appliedMigrations = await loadAppliedMigrations(sql, migrationTableSchema, availableMigrations);
-    const pendingMigrations = availableMigrations.filter((name) => !appliedMigrations.includes(name));
+    const appliedMigrations = await loadAppliedMigrations(
+      sql,
+      migrationTableSchema,
+      availableMigrations,
+    );
+    const pendingMigrations = availableMigrations.filter(
+      (name) => !appliedMigrations.includes(name),
+    );
     if (pendingMigrations.length === 0) {
       return {
         status: "upToDate",
@@ -677,8 +779,14 @@ export async function applyPendingMigrations(url: string): Promise<void> {
       if (repair.repairedMigrations.length > 0) {
         bootstrappedState = await inspectMigrations(url);
       }
-      if (bootstrappedState.status === "needsMigrations" && bootstrappedState.reason === "pending-migrations") {
-        await applyPendingMigrationsManually(url, bootstrappedState.pendingMigrations);
+      if (
+        bootstrappedState.status === "needsMigrations" &&
+        bootstrappedState.reason === "pending-migrations"
+      ) {
+        await applyPendingMigrationsManually(
+          url,
+          bootstrappedState.pendingMigrations,
+        );
         bootstrappedState = await inspectMigrations(url);
       }
     }
@@ -703,8 +811,13 @@ export async function applyPendingMigrations(url: string): Promise<void> {
     if (state.status === "upToDate") return;
   }
 
-  if (state.status !== "needsMigrations" || state.reason !== "pending-migrations") {
-    throw new Error("Migrations are still pending after migration-history reconciliation; run inspectMigrations for details.");
+  if (
+    state.status !== "needsMigrations" ||
+    state.reason !== "pending-migrations"
+  ) {
+    throw new Error(
+      "Migrations are still pending after migration-history reconciliation; run inspectMigrations for details.",
+    );
   }
 
   await applyPendingMigrationsManually(url, state.pendingMigrations);
@@ -720,9 +833,15 @@ export async function applyPendingMigrations(url: string): Promise<void> {
 export type MigrationBootstrapResult =
   | { migrated: true; reason: "migrated-empty-db"; tableCount: 0 }
   | { migrated: false; reason: "already-migrated"; tableCount: number }
-  | { migrated: false; reason: "not-empty-no-migration-journal"; tableCount: number };
+  | {
+      migrated: false;
+      reason: "not-empty-no-migration-journal";
+      tableCount: number;
+    };
 
-export async function migratePostgresIfEmpty(url: string): Promise<MigrationBootstrapResult> {
+export async function migratePostgresIfEmpty(
+  url: string,
+): Promise<MigrationBootstrapResult> {
   const sql = createUtilitySql(url);
 
   try {
@@ -742,7 +861,11 @@ export async function migratePostgresIfEmpty(url: string): Promise<MigrationBoot
     }
 
     if (tableCount > 0) {
-      return { migrated: false, reason: "not-empty-no-migration-journal", tableCount };
+      return {
+        migrated: false,
+        reason: "not-empty-no-migration-journal",
+        tableCount,
+      };
     }
 
     const db = drizzlePg(sql);
@@ -769,7 +892,9 @@ export async function ensurePostgresDatabase(
     `;
     if (existing.length > 0) return "exists";
 
-    await sql.unsafe(`create database "${databaseName}" encoding 'UTF8' lc_collate 'C' lc_ctype 'C' template template0`);
+    await sql.unsafe(
+      `create database "${databaseName}" encoding 'UTF8' lc_collate 'C' lc_ctype 'C' template template0`,
+    );
     return "created";
   } finally {
     await sql.end();
